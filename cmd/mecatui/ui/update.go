@@ -1338,19 +1338,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := mutatedPath(msg.Name, msg.Args); ok {
 			m.conv.recordFileChange(p)
 		}
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolResultMsg:
-		resolved := false
-		if msg.Available {
-			resolved = m.conv.resolveAvailableTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		} else {
-			resolved = m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
-		}
+		resolved := m.conv.resolveToolResult(msg)
 		if !resolved {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
 		m.activeTool = m.conv.latestPendingToolName()
 		m.toolProgress = ""
+		m.syncToolcalls()
 		return m.afterEvent()
 	case client.ToolProgressMsg:
 		// Transient advisory line from a long-running tool: show it beside the
@@ -1456,18 +1453,21 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySubagent(msg)
 		if msg.Kind == client.SubagentEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.TeamMsg:
 		m.applyTeam(msg)
 		if msg.Kind == client.TeamEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ParallelMsg:
 		m.applyParallel(msg)
 		if msg.Kind == client.ParallelEnd {
 			m.activeTool = m.conv.latestPendingToolName()
+			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.ModelRetryMsg:
@@ -2615,6 +2615,17 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 	}
 }
 
+func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
+	detail, ok := intent.(toolcallsDetailIntent)
+	if !ok {
+		return false
+	}
+	if s, ok := m.modal.(*toolcallsState); ok && s.detail && s.selected >= 0 && s.selected < len(s.entries) && s.entries[s.selected].blockID == detail.blockID {
+		s.refreshDetail(&m.conv.scrollback)
+	}
+	return true
+}
+
 // applySurfaceIntent applies a drained surface intent synchronously in the same
 // Tea Update. Returned commands still run asynchronously. stopSurfaceDispatch
 // tells the caller to skip common dispatch post-processing after a root-owned
@@ -2628,6 +2639,9 @@ func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd te
 	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applySessionsSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
+	}
+	if m.applyToolcallsSurfaceIntent(intent) {
+		return m, nil, false
 	}
 	return m, nil, false
 }

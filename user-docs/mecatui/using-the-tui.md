@@ -14,8 +14,9 @@ the agent without waiting for the current run to finish. Assistant text streams
 as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
-Focus a tool card and press `ctrl+t` to view its complete arguments and output.
-Press `ctrl+t` again to return to the preview.
+Use `/toolcalls` to inspect calls in the current session, even during a run or
+when revisiting its transcript. `ctrl+t` expands tool details across the
+conversation; `/toolcalls` focuses on one call at a time.
 
 ## Attach a local file
 
@@ -96,9 +97,9 @@ is pending, the command reports that fact and makes no changes.
 
 When a tool needs permission, a modal shows what it wants to do. Read the
 request, then allow it once, allow the exact action for this session when
-offered, or deny it. Long arguments can be scrolled; `ctrl+t` opens a
-full-screen view when needed. Mouse buttons activate the same choices as their
-displayed keys.
+offered, or deny it. Long arguments can be scrolled. For requests other than
+plan approval, `ctrl+t` opens a full-screen detail view. Mouse buttons activate
+the same choices as their displayed keys.
 
 ## Get editor notifications
 

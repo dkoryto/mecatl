@@ -28,8 +28,8 @@ type heldResultReviewer struct{}
 
 type heldResultAllowPolicy struct{}
 
-func (heldResultAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (heldResultAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 
 func (heldResultAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
@@ -38,8 +38,8 @@ func (heldResultReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _
 	return job == agent.ReviewJobInbound, true
 }
 
-func (heldResultReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
-	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
+func (heldResultReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
+	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, session.AuxiliaryUsage{}, nil
 }
 
 type heldResultRecorder struct {

@@ -25,7 +25,9 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
 - `ResolveApproval(ApprovalResolution) error` — atomically validates the registered
   ask's review ID, purpose, and verdict eligibility and submits the verdict. Contextual
   result release must use this operation with the exact `result_release` acknowledgement.
-- `Cancel()` — cancels the run's context.
+- `Cancel()` — cancels the run while preserving ordinary child join-and-drain behavior.
+  It is a no-op for an already durably parked authorization, whose resumable
+  handoff point remains intact.
 - `CancelChild(childID string) bool` — cancels ONE child run (subagent /
   parallel branch / team member) without touching the run itself ([subagents & teams](subagents-and-teams.md)).
 

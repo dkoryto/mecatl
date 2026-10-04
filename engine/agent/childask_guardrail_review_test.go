@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -21,8 +22,8 @@ type permissionReviewPolicy struct {
 	learns     int
 }
 
-func (p *permissionReviewPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Ask, Reason: "test permission ask", AskProvenance: p.provenance}
+func (p *permissionReviewPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "test permission ask", AskProvenance: p.provenance}}
 }
 func (p *permissionReviewPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
 
@@ -36,9 +37,10 @@ type permissionReviewer struct {
 	waitForCtx bool
 	action     bool
 	actionErr  error
+	usageByJob map[agent.ReviewJob]session.AuxiliaryUsage
 }
 
-func (r *permissionReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *permissionReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.calls++
 	r.requests = append(r.requests, req)
@@ -51,12 +53,12 @@ func (r *permissionReviewer) Review(ctx context.Context, req agent.ToolReviewReq
 	}
 	if r.waitForCtx {
 		<-ctx.Done()
-		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, ctx.Err()
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, session.AuxiliaryUsage{}, ctx.Err()
 	}
 	if req.Job == agent.ReviewJobAction && r.actionErr != nil {
-		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, r.actionErr
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, session.AuxiliaryUsage{}, r.actionErr
 	}
-	return agent.ToolReviewResult{Assessment: r.assessment}, r.err
+	return agent.ToolReviewResult{Assessment: r.assessment}, r.usageByJob[req.Job], r.err
 }
 
 func (*permissionReviewer) GuardrailPermissionReviewEligible(session.ToolCall) bool { return true }
@@ -81,7 +83,15 @@ func (r *permissionReviewer) jobs() []agent.ReviewJob {
 func TestBuiltinFloorPermissionReviewRunsOnChildLoopAndAllowsOnce(t *testing.T) {
 	bash := &fakeShell{}
 	policy := &permissionReviewPolicy{provenance: governance.AskProvenanceBuiltinSubstitutionFloor}
-	reviewer := &permissionReviewer{assessment: agent.ReviewAcceptable, action: true}
+	permissionUsage := session.Usage{InputTokens: 3}
+	reviewer := &permissionReviewer{
+		assessment: agent.ReviewAcceptable, action: true,
+		usageByJob: map[agent.ReviewJob]session.AuxiliaryUsage{
+			agent.ReviewJobPermission: {Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindGuardrail: {Total: permissionUsage, Models: map[string]session.Usage{"provider/permission-review": permissionUsage}},
+			}},
+		},
+	}
 	child := agent.NewEngine(agent.Deps{
 		LLM:          mockllm.New(substitutionAskTurns(2)...),
 		Catalog:      catalogWith(t, bash),
@@ -89,13 +99,23 @@ func TestBuiltinFloorPermissionReviewRunsOnChildLoopAndAllowsOnce(t *testing.T) 
 		ToolReviewer: reviewer,
 		Role:         "subagent",
 	})
-	events := drainWithTimeout(t, child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"}))
+	sess := newSession(t, session.Limits{})
+	events := drainWithTimeout(t, child.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"}))
 
 	if got := len(bash.ran()); got != 2 {
 		t.Fatalf("executions = %d, want 2", got)
 	}
 	if reviewer.count() != 4 || policy.learns != 0 {
 		t.Fatalf("reviews=%d learns=%d, want 4/0", reviewer.count(), policy.learns)
+	}
+	if got := sess.TokenUsageSnapshot()[session.UsageKindGuardrail].Models["provider/permission-review"]; got.InputTokens != 6 {
+		t.Fatalf("substitution-floor permission usage = %+v, want two reviews attributed to provider/permission-review", got)
+	}
+	if got := sess.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Fatalf("permission review leaked into main usage: %+v", got)
+	}
+	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("permission review leaked into router usage: %+v", got)
 	}
 	for _, ev := range events {
 		if ev.Type == session.EvPermissionAsk {
@@ -158,7 +178,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						Catalog: catalogWith(t, bash), Policy: policy, ToolReviewer: reviewer, Hooks: hook, Role: "subagent",
 					})
 					run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "original task"})
-					t.Cleanup(run.Cancel)
+					t.Cleanup(func() { run.Cancel() })
 					<-hook.entered
 					if change != "stable" {
 						agent.RefreshReviewTasksForTest(run, []session.Message{{Role: session.RoleUser, Text: "changed task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
@@ -291,8 +311,8 @@ func TestPermissionReviewCancellationCompletesWithoutConsumerSelfEmission(t *tes
 
 type configuredSystemAskPolicy struct{}
 
-func (configuredSystemAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Ask, Reason: "configured system ask", AskProvenance: governance.AskProvenanceConfigured}
+func (configuredSystemAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Ask, Reason: "configured system ask", AskProvenance: governance.AskProvenanceConfigured}}
 }
 func (configuredSystemAskPolicy) Learn(session.SessionID, session.ToolCall) {}
 

@@ -10,15 +10,16 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
 type scenario1Policy struct{ order *[]string }
 
-func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (p scenario1Policy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	*p.order = append(*p.order, "permission")
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (scenario1Policy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -41,12 +42,12 @@ type scenario1Reviewer struct {
 	requests []agent.ToolReviewRequest
 }
 
-func (r *scenario1Reviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *scenario1Reviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	*r.order = append(*r.order, "review")
 	r.requests = append(r.requests, req)
-	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 func TestADR_0363_ContextualGuardrails_Scenario1_EffectiveCallOrder(t *testing.T) {
@@ -91,11 +92,11 @@ type scenario1GrantReviewer struct {
 	armed   map[string]bool
 }
 
-func (r *scenario1GrantReviewer) Review(_ context.Context, _ agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *scenario1GrantReviewer) Review(_ context.Context, _ agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reviews++
-	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, session.AuxiliaryUsage{}, nil
 }
 func (*scenario1GrantReviewer) GrantDigest(req agent.ToolReviewRequest) (string, bool) {
 	return req.EffectiveCall.Name + ":" + string(req.EffectiveCall.Args) + ":" + req.Environment.Revision, req.EvidenceComplete
@@ -116,8 +117,8 @@ func (r *scenario1GrantReviewer) ArmGrant(digest, _ string) {
 
 type noLearnPolicy struct{ learns int }
 
-func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *noLearnPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
 
@@ -227,14 +228,15 @@ func TestADR_0363_ContextualGuardrails_Scenario1_ConcurrentActionReviews(t *test
 
 type toolReviewerFunc func(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error)
 
-func (f toolReviewerFunc) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
-	return f(ctx, req, source)
+func (f toolReviewerFunc) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
+	result, err := f(ctx, req, source)
+	return result, session.AuxiliaryUsage{}, err
 }
 
 type staticAllowPolicy struct{}
 
-func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (staticAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (staticAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 

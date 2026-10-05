@@ -198,14 +198,15 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 		t.Fatalf("stdout changed by program: %q", stdout.String())
 	}
 	got := stderr.String()
-	line := strings.Index(got, finalSessionHandoffPrefix)
-	if line < 1 || got[line-1] != '\n' || strings.Contains(got, "hosting an embedded mecated at") || strings.Count(got, finalSessionHandoffPrefix) != 1 || strings.LastIndex(got[:line], "\x1b[?1049l") < 0 || !strings.Contains(got[line:], "handoff-child-cleaned\n") {
+	const idLabel = "Session ID:    "
+	line := strings.Index(got, "\n"+idLabel)
+	if line < 0 || strings.Contains(got, "hosting an embedded mecated at") || strings.Contains(got, finalSessionHandoffPrefix) || strings.Count(got, idLabel) != 1 || strings.LastIndex(got[:line], "\x1b[?1049l") < 0 || !strings.Contains(got[line:], "handoff-child-cleaned\n") {
 		t.Fatalf("handoff must follow teardown with a separating line and no startup socket address: %q", got)
 	}
-	fields := strings.SplitN(got[line:], "\n", 2)
-	var id string
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(fields[0], finalSessionHandoffPrefix)), &id); err != nil || id == "" {
-		t.Fatalf("invalid ID: %q: %v", fields[0], err)
+	line++
+	id := strings.SplitN(strings.TrimPrefix(got[line:], idLabel), "\n", 2)[0]
+	if id == "" {
+		t.Fatalf("missing session ID: %q", got[line:])
 	}
 	const finalIDPrefix = "handoff-child-final-id="
 	finalLine := strings.Index(got, finalIDPrefix)
@@ -219,14 +220,14 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 	if scenario != "missing" && id != finalID {
 		t.Fatalf("handoff ID = %q, want seeded final ID %q", id, finalID)
 	}
-	if !strings.Contains(got[line:], "Resume: mecatui --resume '"+id+"'\n") || !strings.Contains(got[line:], "Or: mecatui --resume-latest (may select a different chat)\n") {
+	if !strings.Contains(got[line:], "Resume:        mecatui --resume '"+id+"'\n") || !strings.Contains(got[line:], "               mecatui --resume-latest (may select a different chat)\n") {
 		t.Fatalf("final ID command missing: %q", got[line:])
 	}
 	if scenario == "missing" {
-		if id != "missing-final" || strings.Contains(got[line:], "Session:") || strings.Contains(got[line:], "Model calls:") || strings.Contains(got[line:], "Tokens (main):") {
+		if id != "missing-final" || strings.Contains(got[line:], "Title:") || strings.Contains(got[line:], "Model calls:") || strings.Contains(got[line:], "Tokens (main):") {
 			t.Fatalf("failed lookup retained stale summary: %q", got[line:])
 		}
-	} else if !strings.Contains(got[line:], "Session: final title\nModel calls: 1\nTokens (main): 0 input, 0 output\n") || strings.Contains(got[line:], "first title") {
+	} else if !strings.Contains(got[line:], "Title:         final title\nModel calls:   1\nTokens (main): 0 input, 0 output\n") || strings.Contains(got[line:], "first title") {
 		t.Fatalf("wrong final session snapshot: %q", got[line:])
 	}
 }

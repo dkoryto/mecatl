@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
@@ -39,29 +40,52 @@ func finishFinalSessionHandoff(w io.Writer, final tea.Model, runErr error, inter
 		cancel()
 	}
 	cleanup()
-	if !shouldWriteFinalSessionHandoff(final, runErr, interrupted) || !writeFinalSessionHandoff(w, final) || !embedded || !ok {
+	if !shouldWriteFinalSessionHandoff(final, runErr, interrupted) || !ok {
 		return
 	}
 	id := reporter.ActiveSessionID()
+	// Connected mode, and an ID unsafe to print as one terminal line, keep the
+	// JSON-quoted record; an embedded safe ID gets the aligned human summary instead.
+	if !embedded || id == "" || !utf8.ValidString(id) || !safeHandoffID(id) {
+		writeFinalSessionHandoff(w, final)
+		return
+	}
 	var human strings.Builder
+	human.WriteByte('\n')
+	writeHandoffField(&human, "Session ID:", id)
 	if available {
 		if title := strings.TrimSpace(terminaltext.SanitizeSingleLine(snapshot.Title)); title != "" {
-			_, _ = fmt.Fprintf(&human, "Session: %s\n", title)
+			writeHandoffField(&human, "Title:", title)
 		}
-		_, _ = fmt.Fprintf(&human, "Model calls: %d\nTokens (main): %d input, %d output", snapshot.Turns, snapshot.Usage.InputTokens, snapshot.Usage.OutputTokens)
-		if snapshot.Usage.CacheReadTokens != 0 {
-			_, _ = fmt.Fprintf(&human, ", %d cache read", snapshot.Usage.CacheReadTokens)
+		writeHandoffField(&human, "Model calls:", fmt.Sprint(snapshot.Turns))
+		writeHandoffField(&human, "Tokens (main):", handoffTokens(snapshot.Usage))
+		if snapshot.AuxiliaryUsage != (client.Usage{}) {
+			writeHandoffField(&human, "Tokens (aux):", handoffTokens(snapshot.AuxiliaryUsage))
 		}
-		if snapshot.Usage.CacheWriteTokens != 0 {
-			_, _ = fmt.Fprintf(&human, ", %d cache write", snapshot.Usage.CacheWriteTokens)
-		}
-		human.WriteByte('\n')
 	}
-	if safeHandoffID(id) {
-		_, _ = fmt.Fprintf(&human, "Resume: mecatui --resume '%s'\n", strings.ReplaceAll(id, "'", "'\"'\"'"))
-		human.WriteString("Or: mecatui --resume-latest (may select a different chat)\n")
-	}
+	writeHandoffField(&human, "Resume:", "mecatui --resume '"+strings.ReplaceAll(id, "'", "'\"'\"'")+"'")
+	writeHandoffField(&human, "", "mecatui --resume-latest (may select a different chat)")
 	_, _ = io.WriteString(w, human.String())
+}
+
+// handoffLabelWidth aligns values after the widest label, "Tokens (main): ".
+const handoffLabelWidth = len("Tokens (main): ")
+
+func writeHandoffField(b *strings.Builder, label, value string) {
+	_, _ = fmt.Fprintf(b, "%-*s%s\n", handoffLabelWidth, label, value)
+}
+
+// handoffTokens humanizes one usage value; cache counts are labelled
+// components of input, never summed with it.
+func handoffTokens(u client.Usage) string {
+	s := renderfmt.HumanizeTokens(u.InputTokens) + " input, " + renderfmt.HumanizeTokens(u.OutputTokens) + " output"
+	if u.CacheReadTokens != 0 {
+		s += ", " + renderfmt.HumanizeTokens(u.CacheReadTokens) + " cache read"
+	}
+	if u.CacheWriteTokens != 0 {
+		s += ", " + renderfmt.HumanizeTokens(u.CacheWriteTokens) + " cache write"
+	}
+	return s
 }
 
 func safeHandoffID(id string) bool {

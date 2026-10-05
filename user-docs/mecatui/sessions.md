@@ -70,31 +70,47 @@ use another supported client or control path. Repeating the unchanged command
 will not add watch support. Plan approvals and guardrail reviews use their existing
 dedicated flows and cannot be recovered this way.
 
-To get the active session ID, run `/session` and press `c` to copy it. On a
-normal exit, `mecatui` writes a JSON-quoted ID record to standard error:
+To get the active session ID, run `/session` and press `c` to copy it. When an
+embedded session ends normally, `mecatui` writes an aligned summary to standard
+error:
+
+```text
+Session ID:    01JOPAQUESESSIONID
+Title:         Fix the flaky CI job
+Model calls:   12
+Tokens (main): 29.7K input, 1.8K output, 6.4K cache read
+Tokens (aux):  2.1K input, 85 output
+Resume:        mecatui --resume '01JOPAQUESESSIONID'
+               mecatui --resume-latest (may select a different chat)
+```
+
+The shell-quoted `mecatui --resume` command returns to that exact final chat.
+The `--resume-latest` alternative below it looks for the newest eligible chat
+and can select a different one. A blank line separates the summary from startup
+notices, and `mecatui` does not print the embedded server's private socket
+address.
+
+A connected session instead prints a JSON-quoted ID record:
 
 ```text
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
 
-A blank line separates the exit record from startup notices. `mecatui` does not
-print the embedded server's private socket address.
+To resume it, use `mecatui connect <ADDRESS> --resume <SESSION_ID>` with the
+original server address.
 
-After an embedded session ends normally, the lines that follow show a
-shell-quoted `mecatui --resume '<SESSION_ID>'` command for that exact final chat.
-Use it to return to the same chat. The separately labelled `--resume-latest`
-alternative looks for the newest eligible chat and can select a different one.
-A connected session prints the ID record; to resume it, use
-`mecatui connect <ADDRESS> --resume <SESSION_ID>` with the original server address.
+**Model calls** counts model calls begun in the chat, and **Tokens (main)**
+shows lifetime input and output tokens for the chat's agent runs. **Tokens
+(aux)** appears when auxiliary model work, such as title generation,
+compaction, routing, reviewers, or guardrails, used tokens in the chat. Counts
+are abbreviated, for example `29.7K` or `1.2M`. Nonzero cache-read and
+cache-write counts appear separately, not added to input or output. The latest
+context-meter reading is not included.
 
-When the session snapshot is available, **Model calls** counts model calls begun
-in the chat, and **Tokens (main)** shows lifetime input and output tokens for
-that chat. Nonzero cache-read and cache-write counts appear separately, not
-added to input or output. Title-generation tokens and the latest context-meter
-reading are not included. If the snapshot is unavailable, the exact embedded
-resume command and ID record still appear without a summary. An ID that cannot
-be safely displayed as a single terminal line retains its JSON ID record but
-has no copyable command.
+If the session snapshot is unavailable, the title, model-call, and token lines
+are omitted; the session ID and resume commands still appear. An embedded ID
+that cannot be safely displayed as a single terminal line gets the JSON-quoted
+ID record instead of the summary.
 
 ## Inspect the active session during a run
 

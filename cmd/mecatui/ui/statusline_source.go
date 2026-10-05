@@ -8,7 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/renderfmt"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 )
 
 type statusLineChangedMsg struct {

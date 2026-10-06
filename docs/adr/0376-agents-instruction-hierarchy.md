@@ -1,0 +1,65 @@
+# ADR 0376 - Target-scoped AGENTS instruction hierarchy
+
+- Status: Draft; exact API/config and session-owner contracts and measured new-scope discovery ceiling remain open in the acceptance plan
+- Date: 2026-10-06
+- Scope: project-instruction applicability, admitted-source mapping, and ephemeral context
+- Supersedes: proposed partial supersession of [ADR 0359](0359-harness-context-source-authority.md)'s root-only discovery and [ADR 0043](0043-ephemeral-turn0-instruction-fragments.md)'s once-per-run project guidance
+- Superseded by: none
+
+## Context
+
+[AGENTS.md](https://agents.md/) describes nested guidance and nearest-file conflict precedence, but does not require live refresh or prescribe discovery budgets. The [Codex AGENTS guide](https://developers.openai.com/codex/guides/agents-md/) documents a configurable *combined* default of 32 KiB and a 64 KiB example; Mecatl's 64 KiB default is the operator's choice, not Codex's default. [Claude's memory guidance](https://code.claude.com/docs/en/memory) describes lazy loading and parent-worktree guidance, relevant prior art for the source-mapping choice rather than authority for a child checkout. User instructions outrank repository guidance, subject to Mecatl's higher-priority safety and tool authorization. [Issue #2090](https://github.com/stacklok/mecatl/issues/2090) cites upstream commit `d001185d792eb6402a58e4cbef1c228b309ec25d`.
+
+Root-only guidance misses instructions for packages encountered later in a run. Eager recursive loading would consume repository-wide context and mix sibling guidance. A strict pre-effect visibility protocol, however, would turn advisory instructions into a second execution gate with batch retry and approval machinery. The operator authorized best-effort delivery instead: new scope instructions inform the *next* model decision, without retroactively controlling an already authorized tool call.
+
+Source authority remains separate from execution placement. A selected source may be local, virtual, or independently stored. A child checkout or inferred host parent cannot replace the admitted source or grant a native execution run read access.
+
+## Proposed decision
+
+The [acceptance plan](../acceptance/agents-instruction-hierarchy.md) records authorized behavior and the still-unchecked exact API/config and session-ownership contracts and measured discovery ceiling. This ADR is draft; it does not state implemented behavior or full contract approval.
+
+### Use one admitted composition path
+
+Extend the existing `InstructionAssembler`, manifest-aware assembly, `RootAssembler`, and `DiscoverInstructions` contracts in place to carry encountered targets. Keep one `Deps.Instructions` path and existing source registration, trust admission, placement, ordering, exclusions, and whole-source `combine`/`replace` policy. Reuse `LocalFileOperands` from [PR #2095](https://github.com/stacklok/mecatl/pull/2095) for covered structured file tools. Composition handles value and pointer `MultiAssembler`, `RootAssembler`, and `RulesAssembler` forms without dropping unrelated contributors. Migrate custom callers to the canonical extended contract; no parallel replacement, optional legacy path, new transport/API endpoint, or instruction-specific effective-call deferral interface. Exact exported signatures, manifest fields, and wrapper migration remain unchecked in the plan.
+
+### Discover lexical scopes inside the selected source
+
+Probe only the selected admitted instruction-source root through the starting folder for the first provider request: no recursive repository/module/sibling scan. The instruction-source root is the root of the selected source, not a repository or Git root. The default source selected at the starting subfolder uses that subfolder as its root. For the proposed contract, `cd repo/website && mecatui` therefore loads from `repo/website` and excludes `repo/AGENTS.md`, even if that ancestor is trusted. <!-- lint:not-a-citation: illustrative repository layout --> An explicitly selected admitted broader source rooted at `repo` is the positive control: it may contribute `repo/AGENTS.md` before `repo/website/AGENTS.md`. <!-- lint:not-a-citation: illustrative repository layout --> This boundary comes from explicit source selection, not automatic ancestor expansion.
+
+Covered structured file tools then reveal new directory chains within the same trusted source/subtree mapping. Probe ancestors only inside the selected admitted instruction source; traversal never admits another source or loads outside that boundary. No recursive scanning, upward host walks, or Git-root inference. Preserve nonconflicting ancestors and give the nearest directory precedence on conflicts. Within *each* directory, prefer nonblank `AGENTS.md`; use `CLAUDE.md` when AGENTS is missing or blank. A genuine read error cannot select CLAUDE as a fallback. Frame sibling scopes independently so one sibling does not govern another; lexical in-root aliases keep lexical applicability, while the source backend confines its reads.
+
+Source precedence is separate from directory precedence. Whole-source `replace` selects on the retained target set, not separately for each target. If source A has only `website/AGENTS.md` and lower-priority source B has root guidance, a retained website-and-services view can select A and omit B entirely. Services gets no B fallback in that view, although a services-only run can select B. The website instructions still apply only to website. The implementation must disclose this consequence in diagnostics and the owning public guide, rather than promise per-target fallback. `combine` keeps operator source order. Target strings can discover scopes, but cannot select a source or mint ReadLedger evidence.
+
+### Deliver guidance on the next request, not as an execution gate
+
+Initial guidance and newly encountered scopes appear as ephemeral project context in provider requests. Retain loaded scopes *and their guidance snapshot* across follow-up user messages, approval continuations, and compaction within the same live session, under the combined cap; adding a scope never automatically rereads loaded text, even when a file changed. Explicit ordinary Read remains current and retains its normal tool result/history behavior without refreshing automatic guidance. Automatic bodies do not persist in conversation, events, or snapshots. After process/server restart, reopening may lazily rediscover current guidance; there is no live-refresh failure or stale-cache state machine. Exact ephemeral owner/cleanup and compaction wiring still require approval; implementation updates [ADR 0027](0027-cloud-native.md) Lists 1/2 for the resource outliving a call, without defaulting to a new port/store.
+
+New guidance need not have appeared in the request that generated the current batch. Same-batch Read/Edit and first-touch Write, Copy, Move, or Remove may execute before it reaches the model. Do not defer the batch, retry instruction-specific calls, recheck guidance before each effect, or bind approval to instruction visibility fingerprints. Existing permissions, effective-argument authorization after rewriting, read-before-edit, CAS, create-only writes, and read-parallel/mutate-serial dispatch remain authoritative. Instructions are guidance, not a filesystem sandbox or authorization boundary.
+
+Shell, MCP/custom tools, and ListDir/Glob/Grep do not supply structured affected-path discovery. A real factory must give the model a visible limitation and encourage structured tools for concrete scope discovery; do not infer shell effects from command strings. Neither chat mentions nor opaque-only tasks promise nested activation.
+
+Fresh-context subagents read *current* guidance from inherited admitted sources, while conversation forks inherit the parent's loaded snapshot. Each child independently discovers later scopes and accounts for its budget, preserving inherited exclusions and no-FS. Ordinary worktree forks of the same codebase support inherited guidance and nested discovery through existing trusted mapping/composition; child checkout contents do not create new source authority or require a new mapping framework.
+
+### Bound instruction loading without blocking tool execution
+
+Use a configurable 64 KiB (65,536-byte) default cap for **combined currently retained/included automatic project-instruction content**. This is neither a per-file nor cumulative-read bound; allow an operator to raise it, without inventing an unlimited mode. The exact existing-config field/type, validation, and threading still need review. Retain scopes deterministically in first-encounter order without speculative eviction. Truncate safely on UTF-8 boundaries or omit excess text, label partial/omitted scopes in model context, and warn through injected diagnostics and actual client projections. Do not admit invalid UTF-8, traverse outside the admitted source, or perform unbounded new-scope discovery. Count new candidate reads, including missing and blank files, and establish a finite numeric work ceiling from adapter-cost evidence before plan approval; prototype 128 probes/64 directories and earlier speculative 4,096/16,384 counts are not adopted. No session-lifetime hard exhaustion from repeatedly including earlier text or rereading loaded scopes. A work or content bound stops additional instruction loading, not ordinary authorized tool execution.
+
+Use existing source read operations and transport envelope protections. Content truncation after a read is not a backend preallocation bound; this design does not add bounded-read protobuf/native/MicroVM operations or require an external MicroVM release. Read faults, containment problems, and unavailable sources must be reported without silently switching to host storage or executing instruction-specific denial. Ordinary provider context-window handling still applies to the complete request; it is distinct from an instruction discovery ceiling.
+
+Native execution-backed instructions require existing binding and active run access. A missing BindingID or a reattached workspace without a run grant makes that selected source unavailable; warn and continue best-effort authorized work. Enabling and qualifying native source reads through the actual authorization and factory-to-provider path is a separate issue/dependency before claiming native support. It is not a completion gate for this hierarchy and does not authorize a run-authority redesign.
+
+### Preserve trust and explain selection
+
+Retain project trust admission, remembered anchors, and first-encounter probing. AGENTS-only repositories gain no implicit trust grant; headless posture is not project trust. Keep scope metadata logical, bounded, escaped, and scrubbed in injected diagnostics and actual client projections, without instruction bodies, host paths, or raw backend errors. Existing request manifests account for emitted provenance and bytes; whole-source omission is visible. No new inspection API, durable event, watcher, or shared scope cache is required.
+
+## Alternatives
+
+Root-only discovery does not cover later package work; eager recursive discovery adds unrelated sibling text and repository-scale cost. Model-only advice to read guidance cannot guarantee a first-touch edit is informed, but this best-effort proposal deliberately accepts that gap in exchange for ordinary tool progress. A strict pre-effect retry protocol would require whole-batch deferral, per-effect freshness review, and instruction-specific approval evidence despite guidance having no authorization role.
+
+Parsing Shell commands cannot reliably enumerate paths; blocking opaque calls would change existing authority. New bounded-read transport operations and an external runtime release would add implementation and deployment dependencies without providing access to native sources lacking a binding or run grant. Persisted instruction snapshots would require revocation and child/restart semantics that ephemeral context avoids.
+
+## Consequences
+
+Starting-folder instructions appear on the first request; later scopes are encountered through covered tools and delivered in subsequent requests, subject to measured new-scope discovery work and the configured combined content cap. Retention keeps earlier loaded guidance available across the live session and compaction, but cannot promise completeness after truncation or omission; a restart can rediscover changed text. Whole-source replacement can leave a sibling without lower-priority fallback. Structural tests establish selection and delivery, not model obedience.
+
+A tool may mutate its target before its local instructions are delivered. Source reads and external writers are not transactional with file effects. Existing backend reads may materialize a whole file before client-side truncation, and unavailable native sources need separate enablement. The implementation updates the existing exported engine contracts, API snapshots, and classified changelog only after the open interface decisions are approved; frozen predecessor ADRs stay intact.
